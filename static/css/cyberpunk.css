@@ -1,0 +1,255 @@
+/* Cyberpunk Theme CSS */
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
+
+body {
+    background-color: #0a0a1f; /* Dark blue/purple background */
+    color: #00ffcc; /* Neon cyan/teal text */
+    font-family: 'Orbitron', sans-serif; /* Futuristic font */
+    line-height: 1.7;
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    background-color: rgba(10, 20, 40, 0.85); /* Dark, slightly transparent container */
+    border: 1px solid #00ffcc;
+    box-shadow: 0 0 15px rgba(0, 255, 204, 0.5), 0 0 25px rgba(0, 255, 204, 0.3) inset;
+    border-radius: 0px; /* Sharp edges */
+    padding: 30px;
+    max-width: 1000px;
+    margin: 20px auto;
+}
+
+h1 {
+    color: #ff00ff; /* Neon pink/magenta for main headings */
+    text-align: center;
+    margin-bottom: 40px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #ff00ff;
+    text-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff, 0 0 2px #fff; /* Added subtle white for pop */
+    letter-spacing: 2px;
+    font-size: 2.5em;
+    font-weight: 700;
+}
+
+.form-section h3 {
+    color: #00ffff; /* Bright cyan for section titles */
+    border-bottom: 1px dashed rgba(0, 255, 255, 0.7);
+    padding-bottom: 10px;
+    margin-top: 0;
+    margin-bottom: 20px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 400;
+}
+
+label {
+    display: block;
+    margin-bottom: 10px;
+    font-weight: 600;
+    color: #00ffcc;
+    text-shadow: 0 0 3px rgba(0, 255, 204, 0.7);
+    font-family: 'Roboto Mono', monospace;
+}
+
+input[type="file"],
+select,
+input[type="text"],
+input[type="number"] {
+    width: calc(100% - 24px); /* Account for padding and border */
+    padding: 12px;
+    background-color: rgba(0, 0, 0, 0.6);
+    border: 1px solid #00ffff;
+    border-radius: 0px;
+    font-size: 16px;
+    color: #00ffcc;
+    margin-bottom: 10px;
+    box-shadow: 0 0 5px rgba(0, 255, 255, 0.5) inset;
+    font-family: 'Roboto Mono', monospace;
+}
+
+input[type="file"]::file-selector-button {
+    background-color: #ff00ff;
+    color: #0a0a1f;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    transition: background-color 0.3s, box-shadow 0.3s;
+}
+
+input[type="file"]::file-selector-button:hover {
+    background-color: #00ffcc;
+    box-shadow: 0 0 10px #00ffcc;
+    color: #000;
+}
+
+select {
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%2300FFCC%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+    background-repeat: no-repeat;
+    background-position: right 15px center;
+    background-size: 12px;
+    padding-right: 40px; /* Make space for the arrow */
+}
+
+input[type="color"] {
+    width: calc(100% - 4px); /* Account for padding */
+    height: 45px;
+    padding: 0; /* Remove padding for color input */
+    cursor: pointer;
+    border: 1px solid #00ffff;
+    background-color: rgba(0,0,0,0.3);
+    border-radius: 0px;
+}
+/* Webkit specific styling for color input */
+input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 2px;
+}
+input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 0px;
+}
+
+
+button[type="submit"] {
+    background: linear-gradient(45deg, #ff00ff, #00ffff);
+    color: #0a0a1f; /* Dark text for contrast */
+    border: 1px solid #00ffcc;
+    padding: 14px 22px;
+    font-size: 18px;
+    border-radius: 0px;
+    cursor: pointer;
+    width: 100%;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    box-shadow: 0 0 8px rgba(255, 0, 255, 0.6), 0 0 15px rgba(0, 255, 255, 0.6), 0 0 5px #fff inset;
+}
+
+button[type="submit"]:hover {
+    background: linear-gradient(45deg, #00ffff, #ff00ff);
+    color: #000;
+    box-shadow: 0 0 12px rgba(0, 255, 255, 0.8), 0 0 25px rgba(255, 0, 255, 0.8), 0 0 10px #fff inset;
+    border-color: #ff00ff;
+    transform: translateY(-2px); /* Slight lift effect */
+}
+
+button[type="submit"]:disabled {
+    background: #333;
+    color: #666;
+    border-color: #444;
+    box-shadow: none;
+    cursor: not-allowed;
+    transform: translateY(0);
+}
+
+.progress-area, .result-area {
+    margin: 25px 0;
+    padding: 20px;
+    border-radius: 0px;
+    background-color: rgba(0, 10, 20, 0.75);
+    border: 1px solid #007777; /* Darker cyan border */
+    box-shadow: 0 0 8px rgba(0, 119, 119, 0.5);
+    font-family: 'Roboto Mono', monospace;
+}
+
+.progress-area {
+    border-left: 5px solid #ff00ff;
+}
+#progress-area p { margin: 5px 0; } /* Spacing for progress text */
+
+.result-area {
+    border-left: 5px solid #00ffcc;
+}
+
+.result-area a {
+    color: #ff00ff;
+    font-weight: bold;
+    text-decoration: none;
+    transition: color 0.3s, text-shadow 0.3s;
+}
+
+.result-area a:hover {
+    color: #00ffcc;
+    text-shadow: 0 0 5px #00ffcc;
+    text-decoration: underline;
+}
+
+.subtitle-options {
+    display: none;
+    margin-top: 15px;
+    padding: 20px;
+    background-color: rgba(0, 5, 15, 0.7);
+    border-radius: 0px;
+    border: 1px dashed #005555; /* Subtler border for options */
+}
+
+.subtitle-options.active {
+    display: block;
+}
+
+.form-row {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 15px;
+}
+.form-col {
+    flex: 1;
+}
+
+/* Info text styling */
+.form-group p {
+    font-size: 0.9em;
+    color: #00aaaa; /* Lighter cyan for info text */
+    font-family: 'Roboto Mono', monospace;
+}
+.form-group p i {
+    margin-right: 5px;
+    color: #ff00ff; /* Pink icon */
+}
+
+
+@media (max-width: 768px) {
+    .form-row {
+        flex-direction: column;
+        gap: 0; /* Reduce gap for stacked items */
+    }
+    h1 {
+        font-size: 2em;
+    }
+    button[type="submit"] {
+        padding: 12px 18px;
+        font-size: 16px;
+    }
+}
+
+/* Custom scrollbar for a more thematic feel */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #0a0a1f;
+}
+::-webkit-scrollbar-thumb {
+    background: #ff00ff;
+    border-radius: 0px;
+    border: 1px solid #00ffcc;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #00ffcc;
+    border-color: #ff00ff;
+}
+
+/* Basic glow effect for focused elements */
+input:focus, select:focus, button:focus {
+    outline: none;
+    box-shadow: 0 0 10px #00ffcc, 0 0 5px #00ffcc inset;
+}
