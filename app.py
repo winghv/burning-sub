@@ -272,6 +272,7 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
                 except Exception as e:
                     logger.error(f"Failed to initialize OpenAI client: {str(e)}")
                     raise
+
                 
                 # 获取语言信息
                 detected_lang_code = whisper_result.get('language', 'en')
