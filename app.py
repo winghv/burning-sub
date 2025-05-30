@@ -1,39 +1,51 @@
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, jsonify, flash
 import os
 import subprocess
+import time
+import random
 from werkzeug.utils import secure_filename
 import whisper
-import openai
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from openai import OpenAI
 import re
 import pysubs2
 import uuid
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Import config
+from config import config
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 初始化Flask应用
 app = Flask(__name__)
 
 # 配置
 BASE_DIR = Path(__file__).parent.absolute()
-UPLOAD_FOLDER = 'uploads'
-PROCESSED_FOLDER = 'processed_videos'
+UPLOAD_FOLDER = config.UPLOAD_FOLDER
+PROCESSED_FOLDER = config.PROCESSED_FOLDER
 SUBTITLES_FOLDER = 'subtitles'
 TEMP_AUDIO_FOLDER = 'temp_audio'
 ALLOWED_EXTENSIONS = {'mp4', 'mkv', 'mov', 'avi', 'webm'}
 MAX_CONTENT_LENGTH = 1024 * 1024 * 1024  # 1GB 最大上传大小
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-change-me')
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['PROCESSED_FOLDER'] = PROCESSED_FOLDER
-app.config['SUBTITLES_FOLDER'] = SUBTITLES_FOLDER
-app.config['TEMP_AUDIO_FOLDER'] = TEMP_AUDIO_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+# 应用配置
+app.config.update(
+    SECRET_KEY=os.environ.get('SECRET_KEY', 'dev-key-change-me'),
+    UPLOAD_FOLDER=UPLOAD_FOLDER,
+    PROCESSED_FOLDER=PROCESSED_FOLDER,
+    SUBTITLES_FOLDER=SUBTITLES_FOLDER,
+    TEMP_AUDIO_FOLDER=TEMP_AUDIO_FOLDER,
+    MAX_CONTENT_LENGTH=MAX_CONTENT_LENGTH
+)
 
 # 确保所有必要的目录都存在
 for folder in [UPLOAD_FOLDER, PROCESSED_FOLDER, SUBTITLES_FOLDER, TEMP_AUDIO_FOLDER]:
@@ -83,15 +95,23 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
         # 生成临时文件路径
         audio_filename = f"{basename}.aac"
         audio_filepath = os.path.join(app.config['TEMP_AUDIO_FOLDER'], audio_filename)
+        
+        # 确保字幕文件路径一致
         original_srt_filename = f"{basename}_original.srt"
-        original_srt_filepath = os.path.join(app.config['SUBTITLES_FOLDER'], original_srt_filename)
+        original_srt_filepath = os.path.abspath(os.path.join(app.config['SUBTITLES_FOLDER'], original_srt_filename))
+        
         translated_srt_filename = f"{basename}_translated.srt"
-        translated_srt_filepath = os.path.join(app.config['SUBTITLES_FOLDER'], translated_srt_filename)
-        styled_ass_filepath = os.path.join(app.config['SUBTITLES_FOLDER'], f"{basename}_styled.ass")
+        translated_srt_filepath = os.path.abspath(os.path.join(app.config['SUBTITLES_FOLDER'], translated_srt_filename))
+        
+        styled_ass_filepath = os.path.abspath(os.path.join(app.config['SUBTITLES_FOLDER'], f"{basename}_styled.ass"))
+        
+        # 记录文件路径
+        logger.info(f"Original SRT path: {original_srt_filepath}")
+        logger.info(f"Translated SRT path: {translated_srt_filepath}")
+        logger.info(f"Styled ASS path: {styled_ass_filepath}")
         
         # 从表单获取参数
         target_language = form_data.get('target_language', '').strip()
-        openai_api_key = form_data.get('openai_api_key', '').strip()
         subtitle_type = form_data.get('subtitle_type', 'original_only')
         source_language = form_data.get('subtitle_source_lang', '').strip()
         video_quality = form_data.get('video_quality', '1080p')
@@ -102,6 +122,9 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
         outline_thickness = form_data.get('outline_thickness', '2')
         shadow_depth = form_data.get('shadow_depth', '1')
         whisper_model_size = form_data.get('whisper_model', 'base')
+        
+        # 从配置获取API密钥
+        openai_api_key = config.OPENAI_API_KEY
         
         # 记录参数
         logger.info(f"Processing job {job_id} with params: {form_data}")
@@ -169,25 +192,52 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
             
             # 执行转录
             logger.info("Starting transcription...")
-            whisper_result = model.transcribe(audio_filepath, **transcribe_options)
+            logger.info(f"Audio file exists: {os.path.exists(audio_filepath)}")
+            logger.info(f"Audio file size: {os.path.getsize(audio_filepath) if os.path.exists(audio_filepath) else 0} bytes")
             
-            # 保存原始字幕文件 (SRT格式)
-            with open(original_srt_filepath, "w", encoding="utf-8") as srt_file:
-                for i, segment in enumerate(whisper_result.get('segments', [])):
-                    start_time = segment.get('start', 0)
-                    end_time = segment.get('end', 0)
-                    text = segment.get('text', '').strip()
-                    
-                    if not text:  # 跳过空文本段
-                        continue
+            try:
+                whisper_result = model.transcribe(audio_filepath, **transcribe_options)
+                logger.info("Transcription completed successfully")
+                
+                # 检查转录结果
+                if not whisper_result or 'segments' not in whisper_result or not whisper_result['segments']:
+                    raise ValueError("No transcription segments found in Whisper result")
+                
+                # 保存原始字幕文件 (SRT格式)
+                logger.info(f"Saving transcription to {original_srt_filepath}")
+                segments = whisper_result.get('segments', [])
+                logger.info(f"Number of segments: {len(segments)}")
+                
+                # 确保字幕目录存在
+                os.makedirs(os.path.dirname(original_srt_filepath), exist_ok=True)
+                
+                with open(original_srt_filepath, "w", encoding="utf-8") as srt_file:
+                    for i, segment in enumerate(segments):
+                        start_time = segment.get('start', 0)
+                        end_time = segment.get('end', 0)
+                        text = segment.get('text', '').strip()
                         
-                    srt_file.write(f"{i+1}\n")
-                    srt_file.write(f"{format_timestamp_srt(start_time)} --> {format_timestamp_srt(end_time)}\n")
-                    srt_file.write(f"{text}\n\n")
-            
-            detected_language = whisper_result.get('language', 'unknown')
-            update_status(f'Transcription completed in {detected_language}', 50)
-            logger.info(f"Transcription completed. Detected language: {detected_language}")
+                        if not text:  # 跳过空文本段
+                            logger.warning(f"Empty text in segment {i+1}, skipping")
+                            continue
+                            
+                        srt_entry = f"{i+1}\n{format_timestamp_srt(start_time)} --> {format_timestamp_srt(end_time)}\n{text}\n\n"
+                        srt_file.write(srt_entry)
+                
+                # 验证SRT文件是否成功创建
+                if not os.path.exists(original_srt_filepath):
+                    raise IOError(f"Failed to create SRT file at {original_srt_filepath}")
+                if os.path.getsize(original_srt_filepath) == 0:
+                    raise ValueError("Created SRT file is empty")
+                
+                detected_language = whisper_result.get('language', 'unknown')
+                update_status(f'Transcription completed in {detected_language}', 50)
+                logger.info(f"Transcription completed. Detected language: {detected_language}")
+                logger.info(f"SRT file created successfully at {original_srt_filepath}")
+                
+            except Exception as e:
+                logger.error(f"Error during transcription or SRT creation: {str(e)}", exc_info=True)
+                raise
             
         except Exception as e:
             error_msg = f"Whisper transcription failed: {str(e)}"
@@ -197,7 +247,12 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
             return
 
         # 3. 翻译字幕 (如果启用了翻译)
-        if openai_api_key and target_language:
+        if target_language and subtitle_type in ['translated_only', 'bilingual']:
+            if not openai_api_key:
+                logger.warning("OpenAI API key not found in configuration. Skipping translation.")
+                translated_srt_filepath = None
+            else:
+                logger.info(f"Starting translation to {target_language}")
             try:
                 update_status('Translating subtitles...', 60)
                 
@@ -206,24 +261,21 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
                 if not parsed_srt:
                     raise ValueError("Original SRT is empty or failed to parse")
                 
-                # 设置OpenAI API密钥和基础URL
-                openai.api_key = openai_api_key
-                openai_base_url = form_data.get('openai_base_url', '').strip()
-                if openai_base_url:
-                    # 确保URL以斜杠结尾
-                    if not openai_base_url.endswith('/'):
-                        openai_base_url += '/'
-                    openai.api_base = openai_base_url
-                    logger.info(f"Using custom OpenAI API base URL: {openai_base_url}")
-                else:
-                    # 使用默认的OpenAI API URL
-                    openai.api_base = 'https://api.openai.com/v1/'
-                    logger.info("Using default OpenAI API base URL")
+                # 设置OpenAI API配置
+                try:
+                    client = OpenAI(
+                        api_key=openai_api_key,
+                        base_url=config.OPENAI_API_BASE
+                    )
+                    logger.info(f"Using OpenAI API base URL: {config.OPENAI_API_BASE}")
+                    logger.info(f"Using model: {config.OPENAI_MODEL}")
+                except Exception as e:
+                    logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+                    raise
                 
                 # 获取语言信息
                 detected_lang_code = whisper_result.get('language', 'en')
-                source_lang = source_language or detected_lang_code
-                source_lang_name = get_language_name(source_lang) or source_lang
+                source_lang_name = get_language_name(detected_lang_code) or detected_lang_code
                 target_lang_name = get_language_name(target_language) or target_language
                 
                 # 如果源语言和目标语言相同，跳过翻译
@@ -231,80 +283,121 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
                     update_status('Source and target languages are the same, skipping translation', 70)
                     translated_srt_filepath = original_srt_filepath
                 else:
-                    # 逐段翻译
-                    translated_entries = []
-                    total_segments = len(parsed_srt)
-                    
-                    for i, entry in enumerate(parsed_srt):
-                        try:
-                            # 更新进度
-                            progress = 60 + int(10 * (i / total_segments))
-                            update_status(f'Translating segment {i+1}/{total_segments}...', progress)
+                    # 批量翻译函数
+                    def batch_translate(entries, batch_size=None, max_retries=None):
+                        # 使用配置中的默认值
+                        batch_size = batch_size or config.TRANSLATION_BATCH_SIZE
+                        max_retries = max_retries or config.TRANSLATION_MAX_RETRIES
+                        translated_entries = []
+                        total_batches = (len(entries) + batch_size - 1) // batch_size
+                        
+                        for batch_idx in range(0, len(entries), batch_size):
+                            batch = entries[batch_idx:batch_idx + batch_size]
+                            batch_texts = [entry['text'] for entry in batch]
                             
-                            # 调用OpenAI API进行翻译
-                            try:
-                                response = openai.ChatCompletion.create(
-                                    model="gpt-3.5-turbo",
-                                    messages=[
-                                        {
-                                            "role": "system",
-                                            "content": f"You are a professional translator. Translate the following text from {source_lang_name} to {target_lang_name}. Only output the translated text, nothing else."
-                                        },
-                                        {
-                                            "role": "user",
-                                            "content": entry['text']
-                                        }
-                                    ],
-                                    temperature=0.3,
-                                    max_tokens=1000
-                                )
-                            except Exception as api_error:
-                                error_msg = str(api_error)
-                                # 如果错误是因为模型不存在，尝试使用兼容的模型名称
-                                if "does not exist" in error_msg and "gpt-3.5-turbo" in error_msg:
-                                    logger.warning(f"Model gpt-3.5-turbo not found, trying gpt-3.5-turbo-0613")
-                                    response = openai.ChatCompletion.create(
-                                        model="gpt-3.5-turbo-0613",
-                                        messages=[
-                                            {
-                                                "role": "system",
-                                                "content": f"You are a professional translator. Translate the following text from {source_lang_name} to {target_lang_name}. Only output the translated text, nothing else."
-                                            },
-                                            {
-                                                "role": "user",
-                                                "content": entry['text']
-                                            }
-                                        ],
+                            # 构建批量提示
+                            system_prompt = {
+                                "role": "system",
+                                "content": f"""You are a professional translator. 
+                                Translate the following texts from {source_lang_name} to {target_lang_name}. 
+                                For each input text, output ONLY the translated text in the target language. 
+                                Keep the same order as the input. Separate translations with '---'. Do not add any additional text or numbering."""
+                            }
+                            
+                            user_prompt = {
+                                "role": "user",
+                                "content": "\n---\n".join(batch_texts)
+                            }
+                            
+                            # 重试逻辑
+                            for attempt in range(max_retries):
+                                try:
+                                    # 指数退避
+                                    if attempt > 0:
+                                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                                        logger.warning(f"Attempt {attempt + 1} after {wait_time:.2f}s delay...")
+                                        time.sleep(wait_time)
+                                    
+                                    # 发送批量请求
+                                    response = client.chat.completions.create(
+                                        model=config.OPENAI_MODEL,
+                                        messages=[system_prompt, user_prompt],
                                         temperature=0.3,
-                                        max_tokens=1000
+                                        max_tokens=2000,
+                                        timeout=45
                                     )
-                                else:
-                                    raise api_error
-                            
-                            translated_text = response.choices[0].message['content'].strip()
-                            translated_entries.append({
-                                'index': entry['index'],
-                                'start_time_str': entry['start_time_str'],
-                                'end_time_str': entry['end_time_str'],
-                                'text': translated_text
-                            })
-                            
-                        except Exception as e:
-                            logger.error(f"Error translating segment {i+1}: {str(e)}")
-                            # 如果翻译失败，使用原始文本
-                            translated_entries.append(entry)
+                                    
+                                    # 处理响应
+                                    if not response or not response.choices:
+                                        raise ValueError("Invalid or empty response from OpenAI API")
+                                    
+                                    # 分割翻译结果
+                                    translated_texts = response.choices[0].message.content.strip().split('---')
+                                    translated_texts = [t.strip() for t in translated_texts if t.strip()]
+                                    
+                                    # 验证返回的翻译数量是否匹配
+                                    if len(translated_texts) != len(batch):
+                                        raise ValueError(f"Mismatched number of translations. Expected {len(batch)}, got {len(translated_texts)}")
+                                    
+                                    # 保存翻译结果
+                                    for entry, translated_text in zip(batch, translated_texts):
+                                        translated_entries.append({
+                                            'index': entry['index'],
+                                            'start_time_str': entry['start_time_str'],
+                                            'end_time_str': entry['end_time_str'],
+                                            'text': translated_text
+                                        })
+                                    
+                                    # 更新进度
+                                    current_batch = (batch_idx // batch_size) + 1
+                                    progress = 60 + int(30 * (current_batch / total_batches))
+                                    update_status(f'Translated batch {current_batch}/{total_batches}...', progress)
+                                    logger.info(f"Successfully translated batch {current_batch}/{total_batches}")
+                                    break  # 成功，退出重试循环
+                                    
+                                except openai.error.RateLimitError as e:
+                                    if attempt == max_retries - 1:  # 最后一次重试也失败
+                                        logger.error(f"Rate limit reached after {max_retries} attempts")
+                                        raise
+                                    continue
+                                except Exception as e:
+                                    if attempt == max_retries - 1:  # 最后一次重试也失败
+                                        logger.error(f"Translation failed after {max_retries} attempts: {str(e)}")
+                                        raise
+                                    continue
+                        
+                        return translated_entries
                     
-                    # 保存翻译后的字幕文件
-                    if translated_entries:
+                    # 执行批量翻译
+                    try:
+                        update_status('Starting translation...', 60)
+                        logger.info(f"Starting batch translation of {len(parsed_srt)} segments")
+                        
+                        # 分批处理
+                        translated_entries = batch_translate(
+                            parsed_srt, 
+                            batch_size=config.TRANSLATION_BATCH_SIZE,
+                            max_retries=config.TRANSLATION_MAX_RETRIES
+                        )
+                        
+                        if len(translated_entries) != len(parsed_srt):
+                            raise ValueError(f"Mismatch in number of translated entries. Expected {len(parsed_srt)}, got {len(translated_entries)}")
+                        
+                        # 确保目录存在并保存翻译后的SRT文件
+                        os.makedirs(os.path.dirname(translated_srt_filepath), exist_ok=True)
                         with open(translated_srt_filepath, 'w', encoding='utf-8') as f:
                             for entry in translated_entries:
                                 f.write(f"{entry['index']}\n")
                                 f.write(f"{entry['start_time_str']} --> {entry['end_time_str']}\n")
                                 f.write(f"{entry['text']}\n\n")
+                        
                         update_status('Translation completed', 75)
                         logger.info(f"Translation completed. Saved to {translated_srt_filepath}")
-                    else:
-                        logger.warning("No translations were generated")
+                        
+                    except Exception as e:
+                        error_msg = f"Translation failed: {str(e)}"
+                        logger.error(error_msg, exc_info=True)
+                        update_status('Warning: Translation failed, using original subtitles', 70)
                         translated_srt_filepath = None
             
             except Exception as e:
@@ -319,41 +412,105 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
         # 4. Determine/Merge Subtitles
         final_srt_for_embedding = None
         bilingual_srt_filepath = None
-        # (Logic from previous step to choose/create final_srt_for_embedding based on subtitle_type,
-        #  original_srt_filepath, and translated_srt_filepath - this needs to be robust to translation failure)
+        
+        # Debug logging
+        logger.info(f"Determining final SRT for embedding. Subtitle type: {subtitle_type}")
+        logger.info(f"Original SRT exists: {os.path.exists(original_srt_filepath) if original_srt_filepath else 'N/A'}")
+        logger.info(f"Translated SRT exists: {os.path.exists(translated_srt_filepath) if translated_srt_filepath else 'N/A'}")
+        
         if subtitle_type == "original_only":
-            if os.path.exists(original_srt_filepath): final_srt_for_embedding = original_srt_filepath
+            logger.info("Using original subtitles only")
+            if os.path.exists(original_srt_filepath):
+                final_srt_for_embedding = original_srt_filepath
+                logger.info(f"Selected original SRT: {original_srt_filepath}")
+            else:
+                logger.warning(f"Original SRT not found at: {original_srt_filepath}")
+                
         elif subtitle_type == "translated_only":
-            if translated_srt_filepath and os.path.exists(translated_srt_filepath): final_srt_for_embedding = translated_srt_filepath
+            logger.info("Using translated subtitles only")
+            if translated_srt_filepath and os.path.exists(translated_srt_filepath):
+                final_srt_for_embedding = translated_srt_filepath
+                logger.info(f"Selected translated SRT: {translated_srt_filepath}")
+            else:
+                logger.warning(f"Translated SRT not found or not available")
+                
         elif subtitle_type == "bilingual":
+            logger.info("Attempting to create bilingual subtitles")
             if os.path.exists(original_srt_filepath) and translated_srt_filepath and os.path.exists(translated_srt_filepath):
                 bilingual_srt_filename = f"{basename}_bilingual_{target_language}.srt"
                 bilingual_srt_filepath = os.path.join(app.config['SUBTITLES_FOLDER'], bilingual_srt_filename)
+                logger.info(f"Will create bilingual SRT at: {bilingual_srt_filepath}")
                 try:
+                    # Parse both SRT files
+                    logger.info(f"Parsing original SRT: {original_srt_filepath}")
                     parsed_orig = parse_srt(original_srt_filepath)
+                    logger.info(f"Parsed {len(parsed_orig)} entries from original SRT")
+                    
+                    logger.info(f"Parsing translated SRT: {translated_srt_filepath}")
                     parsed_trans = parse_srt(translated_srt_filepath)
-                    if len(parsed_orig) != len(parsed_trans): print("Warning: Bilingual SRTs differ in length.")
+                    logger.info(f"Parsed {len(parsed_trans)} entries from translated SRT")
+                    
+                    # Log any length mismatch
+                    if len(parsed_orig) != len(parsed_trans): 
+                        logger.warning(f"Bilingual SRTs differ in length. Original: {len(parsed_orig)}, Translated: {len(parsed_trans)}")
+                    
+                    # Create bilingual SRT
+                    logger.info(f"Creating bilingual SRT at {bilingual_srt_filepath}")
                     with open(bilingual_srt_filepath, "w", encoding="utf-8") as bs_file:
                         num_entries = min(len(parsed_orig), len(parsed_trans))
+                        logger.info(f"Merging {num_entries} entries into bilingual SRT")
+                        
                         for i in range(num_entries):
-                            bs_file.write(f"{parsed_orig[i]['index']}\n{parsed_orig[i]['start_time_str']} --> {parsed_orig[i]['end_time_str']}\n{parsed_orig[i]['text']}\n{parsed_trans[i]['text']}\n\n")
-                    final_srt_for_embedding = bilingual_srt_filepath
+                            try:
+                                # Format: original text (newline) translated text
+                                combined_text = f"{parsed_orig[i]['text']}\n{parsed_trans[i]['text']}"
+                                bs_file.write(f"{i+1}\n{parsed_orig[i]['start_time_str']} --> {parsed_orig[i]['end_time_str']}\n{combined_text}\n\n")
+                            except Exception as e:
+                                logger.error(f"Error merging entry {i}: {e}", exc_info=True)
+                                continue
+                    
+                    # Verify the file was created and has content
+                    if os.path.exists(bilingual_srt_filepath) and os.path.getsize(bilingual_srt_filepath) > 0:
+                        logger.info(f"Successfully created bilingual SRT with {num_entries} entries")
+                        final_srt_for_embedding = bilingual_srt_filepath
+                    else:
+                        raise Exception("Failed to create bilingual SRT file or file is empty")
+                        
                 except Exception as e:
-                    print(f"Bilingual creation failed: {e}") # Non-fatal, might fallback
+                    logger.error(f"Bilingual SRT creation failed: {str(e)}", exc_info=True)
+                    logger.warning("Falling back to original subtitles due to bilingual creation failure")
         
-        if not final_srt_for_embedding: # Fallback if preferred type failed
-            if os.path.exists(original_srt_filepath): final_srt_for_embedding = original_srt_filepath
-            else: raise Exception("No suitable SRT file available for embedding.")
+        # Fallback logic if preferred type failed
+        if not final_srt_for_embedding:
+            logger.warning("Preferred subtitle type not available, falling back to alternatives")
+            if os.path.exists(original_srt_filepath):
+                final_srt_for_embedding = original_srt_filepath
+                logger.info(f"Falling back to original SRT: {original_srt_filepath}")
+            else:
+                error_msg = f"No suitable SRT file available for embedding. Original SRT exists: {os.path.exists(original_srt_filepath) if original_srt_filepath else False}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+                
+        logger.info(f"Final SRT selected for embedding: {final_srt_for_embedding}")
 
         # Create styled ASS from the chosen SRT
         try:
             subs = pysubs2.load(final_srt_for_embedding, encoding="utf-8")
             if 'Default' not in subs.styles: subs.styles['Default'] = pysubs2.SSAStyle()
             style = subs.styles['Default']
-            style.fontname = font_name; style.fontsize = float(font_size)
-            style.primarycolor = pysubs2.Color.from_ass_string(primary_color)
-            style.outlinecolor = pysubs2.Color.from_ass_string(outline_color)
-            style.outline = float(outline_thickness); style.shadow = float(shadow_depth)
+            style.fontname = font_name
+            style.fontsize = float(font_size)
+            # Convert hex color to BGR format that pysubs2 expects (e.g., '&HBBGGRR&')
+            if primary_color.startswith('#'):
+                hex_color = primary_color.lstrip('#')
+                bgr_color = f'&H{hex_color[4:6]}{hex_color[2:4]}{hex_color[0:2]}'
+                style.primarycolor = bgr_color
+            if outline_color.startswith('#'):
+                hex_color = outline_color.lstrip('#')
+                bgr_color = f'&H{hex_color[4:6]}{hex_color[2:4]}{hex_color[0:2]}'
+                style.outlinecolor = bgr_color
+            style.outline = float(outline_thickness)
+            style.shadow = float(shadow_depth)
             style.borderstyle = 1
             for line in subs: line.style = 'Default'
             subs.save(styled_ass_filepath, encoding="utf-8")
@@ -493,26 +650,64 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
                     with open(bilingual_srt_filepath, "w", encoding="utf-8") as bs_file:
                         num_entries = min(len(parsed_orig), len(parsed_trans))
                         for i in range(num_entries):
-                            bs_file.write(f"{parsed_orig[i]['index']}\n{parsed_orig[i]['start_time_str']} --> {parsed_orig[i]['end_time_str']}\n{parsed_orig[i]['text']}\n{parsed_trans[i]['text']}\n\n")
+                            # Get original and translated text, ensure they're not None
+                            orig_text = parsed_orig[i]['text'].strip() if parsed_orig[i]['text'] else ''
+                            trans_text = parsed_trans[i]['text'].strip() if i < len(parsed_trans) and parsed_trans[i]['text'] else ''
+                            
+                            # Only include non-empty lines
+                            if orig_text and trans_text:
+                                combined_text = f"{orig_text}\n{trans_text}"
+                            elif orig_text:
+                                combined_text = orig_text
+                            elif trans_text:
+                                combined_text = trans_text
+                            else:
+                                combined_text = ""
+                                
+                            if combined_text:  # Only write non-empty entries
+                                bs_file.write(f"{i+1}\n{parsed_orig[i]['start_time_str']} --> {parsed_orig[i]['end_time_str']}\n{combined_text}\n\n")
                     final_srt_for_embedding = bilingual_srt_filepath
                 except Exception as e:
                     print(f"Bilingual creation failed: {e}") # Non-fatal, might fallback
         
+        # 记录字幕文件状态
+        def log_file_status(filepath, desc):
+            exists = os.path.exists(filepath) if filepath else False
+            size = os.path.getsize(filepath) if exists and filepath else 0
+            logger.info(f"{desc}: {exists} (size: {size} bytes) - {filepath}")
+            return exists
+            
+        logger.info("\n=== Subtitle Files Status ===")
+        orig_exists = log_file_status(original_srt_filepath, "Original SRT")
+        trans_exists = log_file_status(translated_srt_filepath, "Translated SRT") if translated_srt_filepath else False
+        bili_exists = log_file_status(bilingual_srt_filepath, "Bilingual SRT") if bilingual_srt_filepath else False
+        logger.info("============================\n")
+            
         if not final_srt_for_embedding: # Fallback if preferred type failed
+            logger.warning("Preferred subtitle type not available, falling back to original SRT")
             if os.path.exists(original_srt_filepath): 
                 final_srt_for_embedding = original_srt_filepath
+                logger.info(f"Using original SRT: {original_srt_filepath}")
             else: 
-                raise Exception("No suitable SRT file available for embedding.")
+                error_msg = f"No suitable SRT file available for embedding. Original SRT exists: {os.path.exists(original_srt_filepath)}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
 
+        logger.info(f"Using subtitle file for embedding: {final_srt_for_embedding}")
+        
         # Create styled ASS from the chosen SRT
         try:
             subs = pysubs2.load(final_srt_for_embedding, encoding="utf-8")
             if 'Default' not in subs.styles: 
                 subs.styles['Default'] = pysubs2.SSAStyle()
-            style = subs.styles['Default']
-            style.fontname = font_name
-            style.fontsize = float(font_size)
-            style.primarycolor = pysubs2.Color.from_ass_string(primary_color)
+            style = pysubs2.SSAStyle()
+            style.fontname = font_family
+            style.fontsize = font_size
+            # Convert hex color to BGR format that pysubs2 expects (e.g., '&HBBGGRR&')
+            if primary_color.startswith('#'):
+                hex_color = primary_color.lstrip('#')
+                bgr_color = f'&H{hex_color[4:6]}{hex_color[2:4]}{hex_color[0:2]}&'
+                style.primarycolor = bgr_color
             style.outlinecolor = pysubs2.Color.from_ass_string(outline_color)
             style.outline = float(outline_thickness)
             style.shadow = float(shadow_depth)
@@ -749,9 +944,9 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
 def index():
     if request.method == 'POST':
         try:
-            if 'video_file' not in request.files:
+            if 'video' not in request.files:
                 return jsonify({'error': 'No video file part'}), 400
-            file = request.files['video_file']
+            file = request.files['video']
             if file.filename == '':
                 return jsonify({'error': 'No selected video file'}), 400
             
@@ -801,14 +996,17 @@ def job_status(job_id):
 @app.route('/downloads/<filename>')
 def download_file(filename):
     try:
+        # Use absolute path for the directory
+        processed_dir = os.path.join(BASE_DIR, app.config['PROCESSED_FOLDER'])
         return send_from_directory(
-            app.config['PROCESSED_FOLDER'], 
+            processed_dir,
             filename,
             as_attachment=True,
-            download_name=filename
+            download_name=filename,
+            as_attachment_filename=filename  # For compatibility with older Flask versions
         )
     except FileNotFoundError:
-        return jsonify({'error': 'File not found'}), 404
+        return jsonify({'error': f'File not found: {filename}'}), 404
 
 # Helper function for SRT timestamps
 def format_timestamp_srt(seconds):
@@ -892,4 +1090,4 @@ if __name__ == '__main__':
         print("请确保已正确安装Whisper及其依赖项。")
     
     # 启动应用
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True)

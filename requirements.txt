@@ -1,8 +1,10 @@
-Flask
-openai
-ffmpeg-python
-openai-whisper
-pysubs2
+Flask>=2.0.1
+openai>=1.0.0
+ffmpeg-python>=0.2.0
+openai-whisper>=20230314
+pysubs2>=1.2.0
+python-dotenv>=1.0.0
+
+# Optional dependencies:
 # moviepy # For video processing, can also use ffmpeg directly
-# ffmpeg-python # Python bindings for ffmpeg
 # whisper # If installing from pip, though often installed differently

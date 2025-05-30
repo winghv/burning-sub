@@ -171,16 +171,13 @@
             <div class="form-section">
                 <h3>翻译设置</h3>
                 <div class="form-group">
-                    <label for="openai_api_key">OpenAI API 密钥 (留空则仅生成原始字幕):</label>
-                    <input type="password" id="openai_api_key" name="openai_api_key" placeholder="sk-...">
+                    <p style="color: #666; font-size: 0.9em; margin-top: 0;">
+                        <i class="fas fa-info-circle"></i> API 配置已在 .env 文件中设置
+                    </p>
                 </div>
                 <div class="form-group">
-                    <label for="openai_base_url">OpenAI 兼容 API 基础 URL (可选，留空使用默认):</label>
-                    <input type="text" id="openai_base_url" name="openai_base_url" placeholder="https://api.openai.com/v1">
-                </div>
-                <div class="form-group">
-                    <label for="target_language">目标语言 (需要API密钥):</label>
-                    <input type="text" id="target_language" name="target_language" placeholder="例如: en, zh, ja, ko">
+                    <label for="target_language">目标语言:</label>
+                    <input type="text" id="target_language" name="target_language" placeholder="例如: en, zh, ja, ko" required>
                 </div>
             </div>
 
