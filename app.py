@@ -526,37 +526,58 @@ def process_video_pipeline(job_id, video_filepath, original_filename, form_data)
         try:
             # 设置视频质量参数
             video_quality = form_data.get('video_quality', '1080p')
-            crf_values = {
-                '1080p': '20',
-                '720p': '22',
-                '480p': '25',
-                'source': '18'  # 更高质量，文件更大
-            }
-            crf = crf_values.get(video_quality, '23')  # 默认值
             
-            # 构建ffmpeg命令
+            # 优化CRF值：更高质量但保持合理文件大小
+            crf_values = {
+                '1080p': '24',  # 从20调整到24，更好的压缩率
+                '720p': '26',   # 从22调整到26，更好的压缩率
+                '480p': '28',   # 从25调整到28，更好的压缩率
+                'source': '22'  # 从18调整到22，更好的压缩率
+            }
+            crf = crf_values.get(video_quality, '26')  # 默认值
+            
+            # 构建优化的ffmpeg命令
             ffmpeg_cmd_embed = [
                 'ffmpeg',
                 '-y',  # 覆盖输出文件
                 '-i', video_filepath,
                 '-vf', f"ass='{os.path.abspath(styled_ass_filepath)}'",
-                '-c:v', 'libx264',
+                # 视频编码设置
+                '-c:v', 'libx265',
                 '-preset', 'medium',
                 '-crf', crf,
-                '-c:a', 'copy',  # 保留原始音频流
-                '-movflags', '+faststart'  # 优化网络播放
+                '-tune', 'animation' if video_quality == 'source' else 'film',
+                # 简化的x265参数
+                '-x265-params', 'log-level=error:ref=4:bframes=6:keyint=240:min-keyint=24:aq-mode=2:aq-strength=1.0',
+                # 音频设置
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-ar', '44100',
+                '-ac', '2',
+                # 元数据优化
+                '-movflags', '+faststart',
+                '-map_metadata', '-1',
+                # 线程优化
+                '-threads', '0'
             ]
             
-            # 如果是源质量，使用更高质量的设置
+            # 如果是源质量，使用更快的设置
             if video_quality == 'source':
-                ffmpeg_cmd_embed.extend([
-                    '-pix_fmt', 'yuv420p',
-                    '-profile:v', 'high',
-                    '-level', '4.2',
+                ffmpeg_cmd_embed = [
+                    'ffmpeg',
+                    '-y',
+                    '-i', video_filepath,
+                    '-vf', f"subtitles='{os.path.abspath(styled_ass_filepath)}':force_style='Fontsize={font_size},Fontname={font_name}',format=yuv420p",
+                    '-c:v', 'libx265',
+                    '-crf', '28',  # 使用固定CRF值
+                    '-preset', 'medium',  # 使用medium预设加快编码速度
                     '-c:a', 'aac',
-                    '-b:a', '192k',
-                    '-y'
-                ])
+                    '-b:a', '128k',
+                    '-ar', '44100',
+                    '-movflags', '+faststart',
+                    '-map_metadata', '-1',
+                    '-threads', '0'  # 自动选择最佳线程数
+                ]
             # 添加输出文件路径
             ffmpeg_cmd_embed.append(processed_video_filepath)
             
