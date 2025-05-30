@@ -23,6 +23,13 @@ document.addEventListener('DOMContentLoaded', function () {
         if (progressArea) progressArea.textContent = '上传中，请稍候...';
 
         const formData = new FormData(form);
+        
+        // Remove any empty values from form data
+        for (let [key, value] of formData.entries()) {
+            if (value === '') {
+                formData.delete(key);
+            }
+        }
 
         fetch('/', {
             method: 'POST',
